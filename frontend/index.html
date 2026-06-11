@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>古代石质文物表面结垢监测与激光清洗参数优化系统</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="header-left">
+                <div class="logo">🏛️</div>
+                <div>
+                    <h1>石质文物结垢监测与激光清洗系统</h1>
+                    <p class="subtitle">Stone Relic Scale Monitoring & Laser Cleaning Optimization</p>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="status-indicator">
+                    <span class="status-dot" id="ws-status"></span>
+                    <span id="ws-status-text">连接中...</span>
+                </div>
+                <div class="time-display" id="current-time"></div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <aside class="sidebar">
+                <div class="panel">
+                    <h3>文物列表</h3>
+                    <div class="relic-list" id="relic-list">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+
+                <div class="panel" id="relic-detail-panel" style="display:none;">
+                    <h3>文物详情</h3>
+                    <div id="relic-detail"></div>
+                </div>
+
+                <div class="panel">
+                    <h3>传感器实时数据</h3>
+                    <div id="sensor-stats" class="sensor-stats-grid"></div>
+                </div>
+
+                <div class="panel">
+                    <h3>告警统计 (近30天)</h3>
+                    <div id="alert-stats" class="alert-stats">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="content-area">
+                <div class="tabs">
+                    <button class="tab active" data-tab="model">3D 模型视图</button>
+                    <button class="tab" data-tab="contour">结垢等高线</button>
+                    <button class="tab" data-tab="cleaning">激光清洗模拟</button>
+                    <button class="tab" data-tab="trends">趋势分析</button>
+                    <button class="tab" data-tab="algorithm">算法预测</button>
+                </div>
+
+                <div class="tab-content active" id="tab-model">
+                    <div class="model-viewer-container">
+                        <div id="model-viewer"></div>
+                        <div class="model-info-overlay">
+                            <div id="selected-relic-name">选择文物查看模型</div>
+                            <div class="model-controls">
+                                <label>
+                                    <input type="checkbox" id="show-wireframe"> 线框模式
+                                </label>
+                                <label>
+                                    <input type="checkbox" id="show-sensors" checked> 显示传感器
+                                </label>
+                                <label>
+                                    <input type="checkbox" id="show-scale-overlay" checked> 结垢热力图
+                                </label>
+                            </div>
+                        </div>
+                        <div class="color-legend">
+                            <div class="legend-title">结垢厚度 (mm)</div>
+                            <div class="legend-bar">
+                                <div class="legend-gradient"></div>
+                                <div class="legend-labels">
+                                    <span>0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0</span><span>2.5+</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-contour">
+                    <div class="contour-container">
+                        <canvas id="contour-canvas" width="800" height="600"></canvas>
+                        <div class="contour-controls">
+                            <div class="control-group">
+                                <label>等高线层级:</label>
+                                <select id="contour-levels">
+                                    <option value="5">5 层</option>
+                                    <option value="10" selected>10 层</option>
+                                    <option value="15">15 层</option>
+                                    <option value="20">20 层</option>
+                                </select>
+                            </div>
+                            <div class="control-group">
+                                <label>显示模式:</label>
+                                <select id="contour-mode">
+                                    <option value="contour">仅等高线</option>
+                                    <option value="filled" selected>填充+等高线</option>
+                                    <option value="heatmap">热力图</option>
+                                </select>
+                            </div>
+                            <button id="export-contour">导出PNG</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-cleaning">
+                    <div class="cleaning-container">
+                        <div class="cleaning-controls">
+                            <h3>激光清洗参数优化</h3>
+                            <div class="control-group">
+                                <label>目标结垢厚度 (mm):</label>
+                                <input type="number" id="target-thickness" value="1.5" step="0.1" min="0.1" max="10">
+                            </div>
+                            <div class="control-group">
+                                <label>材质类型:</label>
+                                <select id="material-type">
+                                    <option value="calcium_sulfate" selected>硫酸钙 (CaSO₄)</option>
+                                    <option value="gypsum">石膏</option>
+                                    <option value="calcite">方解石</option>
+                                    <option value="dolomite">白云石</option>
+                                    <option value="silicate">硅酸盐</option>
+                                </select>
+                            </div>
+                            <button id="calc-params" class="primary-btn">计算最优参数</button>
+                            <div id="cleaning-result" class="cleaning-result"></div>
+                            <h3 style="margin-top:20px;">清洗模拟</h3>
+                            <div class="control-group">
+                                <label>激光功率 (W):</label>
+                                <input type="range" id="sim-power" min="10" max="500" value="200">
+                                <span id="sim-power-value">200 W</span>
+                            </div>
+                            <div class="control-group">
+                                <label>扫描速度 (mm/s):</label>
+                                <input type="range" id="sim-speed" min="1" max="200" value="50">
+                                <span id="sim-speed-value">50 mm/s</span>
+                            </div>
+                            <button id="start-sim" class="primary-btn">开始清洗模拟</button>
+                            <button id="stop-sim">停止模拟</button>
+                        </div>
+                        <div class="cleaning-canvas-container">
+                            <canvas id="cleaning-canvas" width="700" height="600"></canvas>
+                            <div class="sim-stats">
+                                <div>已清洗: <span id="sim-progress">0</span>%</div>
+                                <div>预计时间: <span id="sim-eta">--:--</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-trends">
+                    <div class="trends-container">
+                        <div class="trend-chart">
+                            <h3>结垢厚度趋势</h3>
+                            <canvas id="trend-thickness"></canvas>
+                        </div>
+                        <div class="trend-chart">
+                            <h3>环境参数趋势</h3>
+                            <canvas id="trend-environment"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tab-algorithm">
+                    <div class="algorithm-container">
+                        <div class="algo-section">
+                            <h3>结垢生长动力学预测</h3>
+                            <div class="control-group">
+                                <label>预测时长 (小时):</label>
+                                <input type="number" id="predict-hours" value="168" min="1" max="8760">
+                            </div>
+                            <div class="control-group">
+                                <label>初始厚度 (mm):</label>
+                                <input type="number" id="init-thickness" value="0.8" step="0.1" min="0">
+                            </div>
+                            <div class="control-group">
+                                <label>SO₂ 浓度 (ppb):</label>
+                                <input type="number" id="predict-so2" value="25" step="1">
+                            </div>
+                            <div class="control-group">
+                                <label>相对湿度 (%):</label>
+                                <input type="number" id="predict-humidity" value="60" step="1" min="0" max="100">
+                            </div>
+                            <div class="control-group">
+                                <label>温度 (°C):</label>
+                                <input type="number" id="predict-temp" value="15" step="1">
+                            </div>
+                            <button id="run-prediction" class="primary-btn">运行预测</button>
+                            <canvas id="prediction-chart" width="700" height="350"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <aside class="right-sidebar">
+                <div class="panel">
+                    <h3>实时告警</h3>
+                    <div class="alert-list" id="alert-list">
+                        <div class="empty-state">暂无告警</div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>清洗记录</h3>
+                    <div class="cleaning-log-list" id="cleaning-log-list">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script src="js/api.js"></script>
+    <script src="js/stats.js"></script>
+    <script src="js/ws.js"></script>
+    <script src="js/TextureLoader.js"></script>
+    <script src="js/StoneModel.js"></script>
+    <script src="js/ContourLines.js"></script>
+    <script src="js/three-viewer.js"></script>
+    <script src="js/contour.js"></script>
+    <script src="js/cleaning.js"></script>
+    <script src="js/trends.js"></script>
+    <script src="js/algorithms.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
