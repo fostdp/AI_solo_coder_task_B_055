@@ -61,6 +61,7 @@
                     <button class="tab" data-tab="cleaning">激光清洗模拟</button>
                     <button class="tab" data-tab="trends">趋势分析</button>
                     <button class="tab" data-tab="algorithm">算法预测</button>
+                    <button class="tab" data-tab="advanced">🤖 智能清洗优化</button>
                 </div>
 
                 <div class="tab-content active" id="tab-model">
@@ -204,6 +205,117 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="tab-content" id="tab-advanced">
+                    <div class="advanced-container">
+                        <div class="advanced-column">
+                            <div class="panel">
+                                <h3>🛤️ 1. 激光清洗路径规划 (TSP)</h3>
+                                <div class="control-group">
+                                    <label>路径规划算法:</label>
+                                    <select id="path-algorithm">
+                                        <option value="two_opt" selected>2-opt 优化 (推荐)</option>
+                                        <option value="nearest">最近邻算法</option>
+                                        <option value="priority">优先级排序</option>
+                                        <option value="random">随机排序</option>
+                                    </select>
+                                </div>
+                                <div class="control-group">
+                                    <label>机器人移动速度 (mm/s):</label>
+                                    <input type="number" id="robot-speed" value="50" step="5" min="1" max="500">
+                                </div>
+                                <button id="btn-plan-path" class="primary-btn">📐 规划最优路径</button>
+                                <div id="tsp-result"></div>
+                                <canvas id="path-canvas" width="420" height="300"></canvas>
+                            </div>
+
+                            <div class="panel">
+                                <h3>🤖 2. 移动清洗机器人模拟</h3>
+                                <div class="control-group">
+                                    <label>播放速度倍率:</label>
+                                    <select id="speed-factor">
+                                        <option value="1">1× (实时)</option>
+                                        <option value="2" selected>2×</option>
+                                        <option value="5">5×</option>
+                                        <option value="10">10×</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex;gap:8px;">
+                                    <button id="btn-sim-robot" class="primary-btn" disabled>▶ 开始机器人模拟</button>
+                                    <button id="btn-stop-robot">⏹ 停止</button>
+                                </div>
+                                <div id="robot-progress"></div>
+                                <p class="hint">提示：请先在「3D模型视图」Tab查看机器人移动和激光清洗效果。</p>
+                            </div>
+                        </div>
+
+                        <div class="advanced-column">
+                            <div class="panel">
+                                <h3>🧪 3. 清洗后表面形貌预测 (随机森林)</h3>
+                                <div class="control-group">
+                                    <label>能量密度 (J/cm²):</label>
+                                    <input type="number" id="roughness-energy" value="1.8" step="0.1" min="0.1" max="10">
+                                </div>
+                                <div class="control-group">
+                                    <label>激光功率 (W):</label>
+                                    <input type="number" id="roughness-power" value="200" step="10" min="10" max="500">
+                                </div>
+                                <div class="control-group">
+                                    <label>脉冲宽度 (ns):</label>
+                                    <input type="number" id="roughness-pulse" value="1000" step="50" min="100" max="5000">
+                                </div>
+                                <div class="control-group">
+                                    <label>扫描速度 (mm/s):</label>
+                                    <input type="number" id="roughness-speed" value="80" step="5" min="1" max="500">
+                                </div>
+                                <div class="control-group">
+                                    <label>初始粗糙度 Ra (μm):</label>
+                                    <input type="number" id="roughness-initial" value="30" step="1" min="0.1" max="200">
+                                </div>
+                                <div class="control-group">
+                                    <label>光斑重叠率:</label>
+                                    <input type="number" id="roughness-overlap" value="0.5" step="0.05" min="0.05" max="0.95">
+                                </div>
+                                <h4 style="margin:8px 0 4px">石材矿物成分 (占比)</h4>
+                                <div class="control-group"><label>硫酸钙 CaSO₄:</label><input type="number" id="mineral-cs" value="0.55" step="0.05" min="0" max="1"></div>
+                                <div class="control-group"><label>方解石 CaCO₃:</label><input type="number" id="mineral-cc" value="0.25" step="0.05" min="0" max="1"></div>
+                                <div class="control-group"><label>白云石:</label><input type="number" id="mineral-dol" value="0.12" step="0.05" min="0" max="1"></div>
+                                <div class="control-group"><label>硅酸盐:</label><input type="number" id="mineral-sil" value="0.08" step="0.05" min="0" max="1"></div>
+                                <button id="btn-predict-roughness" class="primary-btn">🔬 预测清洗后粗糙度</button>
+                                <div id="roughness-result"></div>
+                                <canvas id="roughness-canvas" width="420" height="220"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="advanced-column">
+                            <div class="panel">
+                                <h3>📈 4. 二次结垢风险预警 (ARIMA)</h3>
+                                <div class="control-group">
+                                    <label>预测时长 (小时):</label>
+                                    <input type="number" id="rescale-hours" value="24" step="1" min="1" max="168">
+                                </div>
+                                <div class="control-group">
+                                    <label>
+                                        <input type="checkbox" id="rescale-post-clean" checked>
+                                        刚完成清洗 (加速再结垢模式)
+                                    </label>
+                                </div>
+                                <button id="btn-predict-rescaling" class="primary-btn">⚠️ 预测二次结垢</button>
+                                <div id="rescale-result"></div>
+                                <canvas id="rescale-canvas" width="420" height="260"></canvas>
+                            </div>
+                            <div class="panel info-panel">
+                                <h4>📚 算法说明</h4>
+                                <ul class="info-list">
+                                    <li><strong>TSP路径规划</strong>：基于清洗点坐标和厚度优先级，采用2-opt优化算法最小化机器人总移动距离和时间</li>
+                                    <li><strong>随机森林粗糙度</strong>：50棵决策树集成，基于能量密度、功率、脉宽、矿物成分等10维特征预测表面形貌</li>
+                                    <li><strong>ARIMA时序预测</strong>：自动选择ARIMA(p,d,q)参数，融合SO₂/湿度/温度环境因子预测再结垢速率</li>
+                                    <li><strong>机器人模拟</strong>：六轴机械臂模型，蛇形路径移动，实时显示激光光斑和清洗范围</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </main>
 
             <aside class="right-sidebar">
@@ -232,11 +344,13 @@
     <script src="js/TextureLoader.js"></script>
     <script src="js/StoneModel.js"></script>
     <script src="js/ContourLines.js"></script>
+    <script src="js/robot.js"></script>
     <script src="js/three-viewer.js"></script>
     <script src="js/contour.js"></script>
     <script src="js/cleaning.js"></script>
     <script src="js/trends.js"></script>
     <script src="js/algorithms.js"></script>
+    <script src="js/advanced.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>
