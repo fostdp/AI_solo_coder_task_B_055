@@ -19,6 +19,7 @@ const App = {
         CleaningSim.init();
         Trends.init();
         AlgorithmsUI.init();
+        AdvancedFeatures.init(ThreeViewer);
 
         await this.loadInitialData();
 
@@ -135,6 +136,7 @@ const App = {
 
     async selectRelic(id) {
         this.currentRelicId = id;
+        if (AdvancedFeatures) AdvancedFeatures.currentRelicId = id;
 
         document.querySelectorAll('.relic-item').forEach(item => {
             item.classList.toggle('active', parseInt(item.dataset.id) === id);
