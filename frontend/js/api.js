@@ -88,5 +88,41 @@ const API = {
     async getCleaningOptLog(limit = 50) {
         const res = await fetch(`${API_BASE}/cleaning/opt-log?limit=${limit}`);
         return res.json();
+    },
+
+    async planTSPPath(data) {
+        const res = await fetch(`${API_BASE}/advanced/plan-tsp-path`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        return res.json();
+    },
+
+    async predictRoughness(data) {
+        const res = await fetch(`${API_BASE}/advanced/predict-roughness`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        return res.json();
+    },
+
+    async predictRescaling(data) {
+        const res = await fetch(`${API_BASE}/advanced/predict-rescaling`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        return res.json();
+    },
+
+    async simulateRobot(data) {
+        const res = await fetch(`${API_BASE}/advanced/simulate-robot`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        return res.json();
     }
 };
