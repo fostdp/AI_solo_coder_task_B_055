@@ -45,6 +45,7 @@ type App struct {
 	laserSvc           *laser_threshold.LaserThresholdService
 	alertSvc           *alert_ws.AlertService
 	commonHdlr         *handlers.CommonHandler
+	advancedHdlr       *handlers.AdvancedCleaningHandler
 	monitorSvc         *services.MonitorService
 	metricsSvc         *metrics.MetricsServer
 }
@@ -74,6 +75,7 @@ func NewApp() *App {
 	laserSvc := laser_threshold.NewLaserThresholdService(cfg, chDB, predictionChan, cleaningResultChan)
 	alertSvc := alert_ws.NewAlertService(cfg, chDB, sensorDataChan)
 	commonHdlr := handlers.NewCommonHandler(cfg, chDB)
+	advancedHdlr := handlers.NewAdvancedCleaningHandler(cfg, chDB)
 	monitorSvc := services.NewMonitorService(cfg, chDB)
 	metricsSvc := metrics.NewMetricsServer(":6060")
 
@@ -89,6 +91,7 @@ func NewApp() *App {
 		laserSvc:           laserSvc,
 		alertSvc:           alertSvc,
 		commonHdlr:         commonHdlr,
+		advancedHdlr:       advancedHdlr,
 		monitorSvc:         monitorSvc,
 		metricsSvc:         metricsSvc,
 	}
@@ -117,6 +120,7 @@ func (a *App) setupRouter() *gin.Engine {
 		a.scalingSvc.RegisterRoutes(api)
 		a.laserSvc.RegisterRoutes(api)
 		a.alertSvc.RegisterRoutes(api)
+		a.advancedHdlr.RegisterRoutes(api)
 	}
 
 	return r
@@ -125,7 +129,7 @@ func (a *App) setupRouter() *gin.Engine {
 func (a *App) Start() {
 	zap.L().Info("Starting Stone Relic Monitor",
 		zap.String("version", Version),
-		zap.Strings("modules", []string{"ethercat_ingest", "scaling_model", "laser_threshold", "alert_ws", "metrics"}))
+		zap.Strings("modules", []string{"ethercat_ingest", "scaling_model", "laser_threshold", "alert_ws", "metrics", "advanced_cleaning"}))
 
 	go a.scalingSvc.Run(a.stopChan)
 	go a.laserSvc.Run(a.stopChan)
