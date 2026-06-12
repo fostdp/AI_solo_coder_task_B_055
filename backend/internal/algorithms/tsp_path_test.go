@@ -364,3 +364,123 @@ func BenchmarkTSP2Opt_50(b *testing.B) {
 		SolveTSP(req)
 	}
 }
+
+func TestTSPChristofides_50Points_NoTimeout(t *testing.T) {
+	rand.Seed(7)
+	points := generateRandomPoints(50, 150)
+
+	req := &models.TSPPathRequest{
+		RelicID:   1,
+		Points:    points,
+		Algorithm: "two_opt",
+	}
+	result := SolveTSP(req)
+
+	if result == nil {
+		t.Fatal("result should not be nil for 50 points")
+	}
+	if len(result.OrderedPoints) != 50 {
+		t.Errorf("expected 50 ordered points, got %d", len(result.OrderedPoints))
+	}
+	if result.TotalDistance <= 0 {
+		t.Errorf("expected positive distance, got %f", result.TotalDistance)
+	}
+	t.Logf("50 points Christofides path distance: %.2f mm", result.TotalDistance)
+}
+
+func TestTSPChristofides_100Points(t *testing.T) {
+	rand.Seed(42)
+	points := generateRandomPoints(100, 200)
+
+	req := &models.TSPPathRequest{
+		RelicID:   1,
+		Points:    points,
+		Algorithm: "two_opt",
+	}
+	result := SolveTSP(req)
+
+	if result == nil {
+		t.Fatal("result should not be nil for 100 points")
+	}
+	if len(result.OrderedPoints) != 100 {
+		t.Errorf("expected 100 ordered points, got %d", len(result.OrderedPoints))
+	}
+
+	visited := make(map[int]bool)
+	for _, idx := range result.PathIndices {
+		if visited[idx] {
+			t.Errorf("duplicate visit at index %d", idx)
+		}
+		visited[idx] = true
+	}
+	if len(visited) != 100 {
+		t.Errorf("visited %d unique points, expected 100", len(visited))
+	}
+
+	t.Logf("100 points Christofides path distance: %.2f mm", result.TotalDistance)
+	t.Logf("  computation time (approx): %.2f s", float64(result.TotalTimeSeconds)/1000.0)
+}
+
+func TestTSPAdaptiveStrategy(t *testing.T) {
+	testCases := []struct {
+		name string
+		n    int
+	}{
+		{"small_15pts", 15},
+		{"medium_35pts", 35},
+		{"large_80pts", 80},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rand.Seed(100)
+			points := generateRandomPoints(tc.n, 100)
+			req := &models.TSPPathRequest{
+				RelicID:   1,
+				Points:    points,
+				Algorithm: "two_opt",
+			}
+			result := SolveTSP(req)
+
+			if result == nil {
+				t.Fatalf("%s: result is nil", tc.name)
+			}
+			if len(result.OrderedPoints) != tc.n {
+				t.Errorf("%s: expected %d points, got %d", tc.name, tc.n, len(result.OrderedPoints))
+			}
+			if result.TotalDistance <= 0 && tc.n > 1 {
+				t.Errorf("%s: distance should be positive, got %f", tc.name, result.TotalDistance)
+			}
+			t.Logf("%s: distance=%.2f mm", tc.name, result.TotalDistance)
+		})
+	}
+}
+
+func TestTSPEuclideanDistanceMatrix(t *testing.T) {
+	points := []models.CleaningPoint{
+		{ID: 0, X: 0, Y: 0, Z: 0},
+		{ID: 1, X: 3, Y: 0, Z: 4},
+		{ID: 2, X: 0, Y: 0, Z: 12},
+	}
+	d := euclideanDistance3D(&points[0], &points[1])
+	if math.Abs(d-5.0) > 1e-9 {
+		t.Errorf("expected distance 5.0, got %f", d)
+	}
+	d2 := euclideanDistance3D(&points[0], &points[2])
+	if math.Abs(d2-12.0) > 1e-9 {
+		t.Errorf("expected distance 12.0, got %f", d2)
+	}
+}
+
+func BenchmarkTSPChristofides_100(b *testing.B) {
+	points := generateRandomPoints(100, 200)
+	req := &models.TSPPathRequest{
+		RelicID:   1,
+		Points:    points,
+		Algorithm: "two_opt",
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		SolveTSP(req)
+	}
+}
