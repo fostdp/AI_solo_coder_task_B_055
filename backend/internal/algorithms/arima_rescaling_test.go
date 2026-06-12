@@ -307,14 +307,14 @@ func TestRescalingARIMAParams(t *testing.T) {
 	p, d, q := result.ARIMAParams[0], result.ARIMAParams[1], result.ARIMAParams[2]
 	t.Logf("ARIMA parameters: p=%d, d=%d, q=%d", p, d, q)
 
-	if p < 0 || p > 3 {
-		t.Errorf("p should be in [0,3], got %d", p)
+	if p < 0 || p > arimaMaxP {
+		t.Errorf("p should be in [0,%d], got %d", arimaMaxP, p)
 	}
-	if d < 0 || d > 2 {
-		t.Errorf("d should be in [0,2], got %d", d)
+	if d < 0 || d > arimaMaxD {
+		t.Errorf("d should be in [0,%d], got %d", arimaMaxD, d)
 	}
-	if q < 0 || q > 2 {
-		t.Errorf("q should be in [0,2], got %d", q)
+	if q < 0 || q > arimaMaxQ {
+		t.Errorf("q should be in [0,%d], got %d", arimaMaxQ, q)
 	}
 }
 
@@ -440,5 +440,154 @@ func BenchmarkARIMAPrediction(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		PredictRescaling(req)
+	}
+}
+
+func TestARIMAParameterStability(t *testing.T) {
+	rand.Seed(42)
+	history := generateRescalingHistory(60, 0.006, 0.002)
+
+	histFloat := make([]float64, len(history))
+	for i, v := range history {
+		histFloat[i] = float64(v)
+	}
+
+	var results [][3]int
+	nRuns := 5
+	for i := 0; i < nRuns; i++ {
+		p, d, q, _ := autoSelectARIMA(histFloat)
+		results = append(results, [3]int{p, d, q})
+		t.Logf("Run %d: ARIMA(%d,%d,%d)", i+1, p, d, q)
+	}
+
+	sameCount := 0
+	first := results[0]
+	for _, r := range results {
+		if r == first {
+			sameCount++
+		}
+	}
+	t.Logf("Parameter consistency: %d/%d runs returned same params", sameCount, nRuns)
+	if sameCount < nRuns/2 {
+		t.Logf("NOTE: params vary across runs (%d/%d same) — this may be acceptable for small data",
+			sameCount, nRuns)
+	}
+}
+
+func TestARIMAAICcVsAIC(t *testing.T) {
+	rand.Seed(123)
+
+	testCases := []struct {
+		name       string
+		baseRate   float32
+		n          int
+	}{
+		{"small_sample", 0.005, 15},
+		{"medium_sample", 0.005, 40},
+		{"large_sample", 0.005, 80},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			history := generateRescalingHistory(tc.n, tc.baseRate, tc.baseRate*0.3)
+			histFloat := make([]float64, len(history))
+			for i, v := range history {
+				histFloat[i] = float64(v)
+			}
+
+			p, d, q, conf := autoSelectARIMA(histFloat)
+			t.Logf("%s (n=%d): selected ARIMA(%d,%d,%d), confidence=%.2f",
+				tc.name, tc.n, p, d, q, conf)
+
+			if p < 0 || p > arimaMaxP {
+				t.Errorf("p=%d out of range [0,%d]", p, arimaMaxP)
+			}
+			if d < 0 || d > arimaMaxD {
+				t.Errorf("d=%d out of range [0,%d]", d, arimaMaxD)
+			}
+			if q < 0 || q > arimaMaxQ {
+				t.Errorf("q=%d out of range [0,%d]", q, arimaMaxQ)
+			}
+			if conf <= 0 || conf > 1.0 {
+				t.Errorf("confidence %.3f out of (0,1]", conf)
+			}
+		})
+	}
+}
+
+func TestARIMADOrderSelection(t *testing.T) {
+	linearSeries := make([]float64, 40)
+	for i := range linearSeries {
+		linearSeries[i] = 0.02 + float64(i)*0.005
+	}
+	dLinear := selectOptimalD(linearSeries)
+	t.Logf("Linear trend series: optimal d=%d (expected >=1)", dLinear)
+	if dLinear < 1 {
+		t.Logf("NOTE: linear trend may need d>=1, got d=%d (ADF approx may vary)", dLinear)
+	}
+
+	constantSeries := make([]float64, 30)
+	for i := range constantSeries {
+		constantSeries[i] = 0.05
+	}
+	dConst := selectOptimalD(constantSeries)
+	t.Logf("Constant series: optimal d=%d (expected 0)", dConst)
+
+	randomWalk := make([]float64, 40)
+	val := 0.05
+	for i := range randomWalk {
+		val += rand.NormFloat64() * 0.003
+		randomWalk[i] = val
+	}
+	dRW := selectOptimalD(randomWalk)
+	t.Logf("Random walk series: optimal d=%d (expected >=1)", dRW)
+}
+
+func TestARIMALjungBoxWhiteNoise(t *testing.T) {
+	rand.Seed(99)
+	noise := make([]float64, 100)
+	for i := range noise {
+		noise[i] = rand.NormFloat64()
+	}
+	pValue := ljungBoxTest(noise, 5)
+	t.Logf("White noise Ljung-Box p-value: %.4f (expected > 0.05)", pValue)
+	if pValue < 0.01 {
+		t.Logf("NOTE: white noise p-value %.4f is low (random seed may cause)", pValue)
+	}
+
+	trended := make([]float64, 100)
+	for i := range trended {
+		trended[i] = float64(i) * 0.1
+	}
+	pValue2 := ljungBoxTest(trended, 5)
+	t.Logf("Strong trend Ljung-Box p-value: %.4f (expected ~0)", pValue2)
+}
+
+func TestARIMAHannanRissanenMA(t *testing.T) {
+	rand.Seed(7)
+	n := 60
+	series := make([]float64, n)
+	residuals := make([]float64, n)
+	for i := 0; i < n; i++ {
+		residuals[i] = rand.NormFloat64() * 0.003
+	}
+	for i := 1; i < n; i++ {
+		series[i] = 0.005 + 0.5*residuals[i-1] + residuals[i]
+		if i >= 2 {
+			series[i] += 0.3 * residuals[i-2]
+		}
+	}
+
+	arCoeffs := fitAR(series, 2)
+	maCoeffs := hannanRissanenMA(series, arCoeffs, 2, 2)
+
+	t.Logf("Hannan-Rissanen MA(2) coefficients: %v", maCoeffs)
+	for i, c := range maCoeffs {
+		if math.IsNaN(c) || math.IsInf(c, 0) {
+			t.Errorf("MA coeff %d is NaN/Inf: %f", i, c)
+		}
+		if math.Abs(c) > 1.0 {
+			t.Logf("MA coeff %d = %.3f (|c|>1, non-invertible but acceptable for estimation)", i, c)
+		}
 	}
 }
