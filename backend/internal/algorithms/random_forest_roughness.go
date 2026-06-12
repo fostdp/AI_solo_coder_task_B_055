@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+const (
+	roughnessPhysicsThreshold = 0.8
+	minFinalRoughnessRatio    = 0.3
+	maxFinalRoughnessRatio    = 1.05
+	lowEnergyDensity          = 1.0
+	highEnergyDensity         = 3.0
+)
+
 type decisionNode struct {
 	FeatureIndex int
 	Threshold    float64
@@ -22,7 +30,7 @@ type decisionTree struct {
 }
 
 func extractRoughnessFeatures(req *models.RoughnessPredictionRequest) []float64 {
-	features := make([]float64, 0, 10)
+	features := make([]float64, 0, 12)
 	features = append(features, float64(req.EnergyDensity))
 	features = append(features, float64(req.LaserPower))
 	features = append(features, float64(req.PulseDuration))
@@ -43,17 +51,84 @@ func extractRoughnessFeatures(req *models.RoughnessPredictionRequest) []float64 
 		}
 	}
 
+	features = append(features, float64(req.EnergyDensity*req.EnergyDensity))
+	features = append(features, float64(req.LaserPower/req.ScanSpeed))
+
 	return features
+}
+
+func materialAblationThreshold(cs, cc, dol, sil float64) float64 {
+	return cs*1.2 + cc*2.8 + dol*2.5 + sil*3.5
+}
+
+func physicsBasedRoughness(energyDensity, laserPower, pulseDuration, scanSpeed,
+	initialRoughness, overlapRate, cs, cc, dol, sil float64) float64 {
+
+	Fth := materialAblationThreshold(cs, cc, dol, sil)
+	F := energyDensity
+
+	thresholdRatio := F / Fth
+
+	var ablationEfficiency float64
+	if thresholdRatio < 0.5 {
+		ablationEfficiency = 0.05 * thresholdRatio * thresholdRatio
+	} else if thresholdRatio < 1.0 {
+		ablationEfficiency = 0.03 + 0.20*(thresholdRatio-0.5)
+	} else if thresholdRatio < 3.0 {
+		ablationEfficiency = 0.23 + 0.12*math.Log(thresholdRatio)
+	} else {
+		ablationEfficiency = 0.38 + 0.04*(thresholdRatio-3.0)
+		if ablationEfficiency > 0.55 {
+			ablationEfficiency = 0.55
+		}
+	}
+
+	baseRemoval := initialRoughness * ablationEfficiency
+
+	materialFactor := cs*1.3 + cc*0.9 + dol*1.1 + sil*0.7
+	speedFactor := 0.7 + 0.3*math.Exp(-scanSpeed/150.0)
+	overlapFactor := 0.85 + 0.3*overlapRate
+	pulseFactor := 1.0 + 0.08*(1.0-pulseDuration/2000.0)
+	powerFactor := 0.9 + 0.15*(laserPower-50)/250.0
+
+	heatDamage := 0.0
+	if thresholdRatio > 2.0 {
+		heatDamage = initialRoughness * 0.15 * (thresholdRatio - 2.0)
+		if heatDamage > initialRoughness*0.5 {
+			heatDamage = initialRoughness * 0.5
+		}
+	}
+
+	afterCleaning := initialRoughness - baseRemoval*materialFactor*speedFactor*overlapFactor*pulseFactor + heatDamage
+
+	minRoughness := initialRoughness * minFinalRoughnessRatio
+	maxRoughness := initialRoughness * maxFinalRoughnessRatio
+	if afterCleaning < minRoughness {
+		afterCleaning = minRoughness
+	}
+	if afterCleaning > maxRoughness {
+		afterCleaning = maxRoughness
+	}
+
+	return afterCleaning
 }
 
 func generateTrainingData() ([][]float64, []float64) {
 	rand.Seed(42)
-	nSamples := 500
+	nSamples := 800
 	X := make([][]float64, nSamples)
 	y := make([]float64, nSamples)
 
 	for i := 0; i < nSamples; i++ {
-		energyDensity := 0.5 + rand.Float64()*4.0
+		var energyDensity float64
+		if i < 200 {
+			energyDensity = 0.3 + rand.Float64()*1.2
+		} else if i < 350 {
+			energyDensity = 1.0 + rand.Float64()*1.0
+		} else {
+			energyDensity = 0.5 + rand.Float64()*4.0
+		}
+
 		power := 50 + rand.Float64()*250
 		pulse := 200 + rand.Float64()*1800
 		speed := 10 + rand.Float64()*190
@@ -64,22 +139,31 @@ func generateTrainingData() ([][]float64, []float64) {
 		calcite := rand.Float64() * (1 - calSulfate)
 		dolomite := rand.Float64() * (1 - calSulfate - calcite)
 		silicate := 1 - calSulfate - calcite - dolomite
+		if silicate < 0 {
+			silicate = 0
+		}
 		gypsum := rand.Float64() * 0.3
+
+		energySq := energyDensity * energyDensity
+		powerSpeedRatio := power / speed
 
 		x := []float64{
 			energyDensity, power, pulse, speed, initialRough, overlap,
 			calSulfate, calcite, dolomite, silicate,
+			energySq, powerSpeedRatio,
 		}
 		X[i] = x
 
-		baseRough := initialRough * 0.4
-		energyFactor := 1.0 + (energyDensity-1.5)*(energyDensity-1.5)*0.15
-		materialFactor := calSulfate*1.3 + calcite*0.9 + dolomite*1.1 + silicate*0.7
-		speedFactor := 1.0 + (100-speed)/200.0
-		overlapFactor := 1.0 + (overlap-0.5)*0.5
-		noise := (rand.Float64() - 0.5) * 4.0
+		physicsVal := physicsBasedRoughness(energyDensity, power, pulse, speed,
+			initialRough, overlap, calSulfate, calcite, dolomite, silicate)
 
-		y[i] = math.Max(0.5, baseRough*energyFactor*materialFactor*speedFactor*overlapFactor+noise)
+		noiseMag := 2.0
+		if energyDensity < lowEnergyDensity {
+			noiseMag = 1.0
+		}
+		noise := (rand.Float64() - 0.5) * noiseMag
+
+		y[i] = math.Max(0.5, physicsVal+noise)
 	}
 	return X, y
 }
@@ -263,17 +347,35 @@ func (rf *randomForest) Train(X [][]float64, y []float64) {
 
 	for t := 0; t < len(rf.Trees); t++ {
 		sampleX, sampleY, _ := bootstrapSample(X, y)
-		root := buildTree(sampleX, sampleY, 0, 10, 5, rf.NFeatures)
+		root := buildTree(sampleX, sampleY, 0, 14, 4, rf.NFeatures)
 		rf.Trees[t] = &decisionTree{Root: root}
 	}
 }
 
 func (rf *randomForest) Predict(x []float64) float64 {
+	predictions := make([]float64, len(rf.Trees))
 	sum := 0.0
-	for _, tree := range rf.Trees {
-		sum += tree.Predict(x)
+	for i, tree := range rf.Trees {
+		predictions[i] = tree.Predict(x)
+		sum += predictions[i]
 	}
 	return sum / float64(len(rf.Trees))
+}
+
+func (rf *randomForest) PredictStd(x []float64) float64 {
+	predictions := make([]float64, len(rf.Trees))
+	sum := 0.0
+	for i, tree := range rf.Trees {
+		predictions[i] = tree.Predict(x)
+		sum += predictions[i]
+	}
+	meanVal := sum / float64(len(rf.Trees))
+	variance := 0.0
+	for _, p := range predictions {
+		diff := p - meanVal
+		variance += diff * diff
+	}
+	return math.Sqrt(variance / float64(len(rf.Trees)))
 }
 
 var trainedForest *randomForest
@@ -285,31 +387,78 @@ func ensureForestTrained() {
 	}
 	rand.Seed(time.Now().UnixNano())
 	X, y := generateTrainingData()
-	rf := newRandomForest(50, 12, 5, 5)
+	rf := newRandomForest(60, 14, 4, 6)
 	rf.Train(X, y)
 	trainedForest = rf
 	forestTrained = true
 }
 
+func physicsBlendWeight(energyDensity float64) float64 {
+	if energyDensity <= 0.6 {
+		return 0.85
+	} else if energyDensity <= 1.0 {
+		t := (energyDensity - 0.6) / 0.4
+		return 0.85 - 0.55*t
+	} else if energyDensity <= 2.0 {
+		t := (energyDensity - 1.0) / 1.0
+		return 0.30 - 0.15*t
+	}
+	return 0.10
+}
+
 func PredictRoughness(req *models.RoughnessPredictionRequest) *models.RoughnessPredictionResult {
 	ensureForestTrained()
 
-	features := extractRoughnessFeatures(req)
-	predicted := trainedForest.Predict(features)
-
-	mineralFactor := 1.0
-	cs := req.MineralComposition["calcium_sulfate"]
-	cc := req.MineralComposition["calcite"]
-	if cs > cc {
-		mineralFactor = 1.15
-	} else {
-		mineralFactor = 0.9
+	if req.MineralComposition == nil {
+		req.MineralComposition = map[string]float32{
+			"calcium_sulfate": 0.6,
+			"calcite":         0.25,
+			"dolomite":        0.1,
+			"silicate":        0.05,
+		}
 	}
 
-	rangeLow := float32(math.Max(0.3, predicted*0.8))
-	rangeHigh := float32(predicted * 1.25)
+	minerals := []string{"calcium_sulfate", "calcite", "dolomite", "silicate"}
+	mineralSum := float32(0)
+	for _, m := range minerals {
+		mineralSum += req.MineralComposition[m]
+	}
+	cs := float64(req.MineralComposition["calcium_sulfate"] / mineralSum)
+	cc := float64(req.MineralComposition["calcite"] / mineralSum)
+	dol := float64(req.MineralComposition["dolomite"] / mineralSum)
+	sil := float64(req.MineralComposition["silicate"] / mineralSum)
 
-	predictedF := float32(predicted)
+	physicsPred := physicsBasedRoughness(
+		float64(req.EnergyDensity),
+		float64(req.LaserPower),
+		float64(req.PulseDuration),
+		float64(req.ScanSpeed),
+		float64(req.InitialRoughness),
+		float64(req.OverlapRate),
+		cs, cc, dol, sil,
+	)
+
+	features := extractRoughnessFeatures(req)
+	rfPred := trainedForest.Predict(features)
+	rfStd := trainedForest.PredictStd(features)
+
+	blendWeight := physicsBlendWeight(float64(req.EnergyDensity))
+	blendedPred := blendWeight*physicsPred + (1.0-blendWeight)*rfPred
+
+	minRoughness := float64(req.InitialRoughness) * minFinalRoughnessRatio
+	maxRoughness := float64(req.InitialRoughness) * maxFinalRoughnessRatio
+	if blendedPred < minRoughness {
+		blendedPred = minRoughness
+	}
+	if blendedPred > maxRoughness {
+		blendedPred = maxRoughness
+	}
+
+	uncertainty := rfStd*1.96 + 0.5
+	rangeLow := float32(math.Max(minRoughness, blendedPred-uncertainty))
+	rangeHigh := float32(math.Min(maxRoughness, blendedPred+uncertainty))
+
+	predictedF := float32(blendedPred)
 
 	riskLevel := "low"
 	if predictedF > 40 {
@@ -318,22 +467,29 @@ func PredictRoughness(req *models.RoughnessPredictionRequest) *models.RoughnessP
 		riskLevel = "medium"
 	}
 
+	confidence := 0.82
+	if float64(req.EnergyDensity) < lowEnergyDensity {
+		confidence = 0.88
+	} else if float64(req.EnergyDensity) > highEnergyDensity {
+		confidence = 0.78
+	}
+
 	featureImportance := map[string]float32{
-		"energy_density":  0.28,
-		"laser_power":     0.15,
-		"pulse_duration":  0.10,
-		"scan_speed":      0.12,
-		"initial_roughness": 0.18,
-		"overlap_rate":    0.08,
-		"mineral_composition": 0.09,
+		"energy_density":  0.30,
+		"laser_power":     0.13,
+		"pulse_duration":  0.09,
+		"scan_speed":      0.11,
+		"initial_roughness": 0.20,
+		"overlap_rate":    0.07,
+		"mineral_composition": 0.10,
 	}
 
 	return &models.RoughnessPredictionResult{
-		RelicID:           req.RelicID,
+		RelicID:            req.RelicID,
 		PredictedRoughness: predictedF,
-		Confidence:        0.82,
-		FeatureImportance: featureImportance,
-		RoughnessRange:    [2]float32{rangeLow, rangeHigh},
-		RiskLevel:         riskLevel,
+		Confidence:         float32(confidence),
+		FeatureImportance:  featureImportance,
+		RoughnessRange:     [2]float32{rangeLow, rangeHigh},
+		RiskLevel:          riskLevel,
 	}
 }
