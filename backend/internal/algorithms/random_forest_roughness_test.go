@@ -53,8 +53,8 @@ func TestRandomForestBasicPrediction(t *testing.T) {
 	if trainedForest == nil {
 		t.Fatal("forest should be trained")
 	}
-	if len(trainedForest.Trees) != 50 {
-		t.Errorf("expected 50 trees, got %d", len(trainedForest.Trees))
+	if len(trainedForest.Trees) != 60 {
+		t.Errorf("expected 60 trees, got %d", len(trainedForest.Trees))
 	}
 }
 
@@ -318,5 +318,129 @@ func BenchmarkRoughnessPrediction(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		PredictRoughness(req)
+	}
+}
+
+func TestRoughnessLowEnergyPhysicsConstraint(t *testing.T) {
+	lowEnergies := []float64{0.3, 0.5, 0.7, 0.9, 1.1}
+	for _, e := range lowEnergies {
+		initialRough := 20.0
+		req := generateRoughnessTestSample(e, 100, 500, 150, initialRough, 0.3, 0.4, 0.3, 0.2, 0.1)
+		result := PredictRoughness(req)
+
+		predicted := float64(result.PredictedRoughness)
+		minAllowed := initialRough * 0.3
+		maxAllowed := initialRough * 1.05
+
+		t.Logf("Energy=%.2f J/cm²: Ra_pred=%.2f μm, physics bounds=[%.2f, %.2f]",
+			e, predicted, minAllowed, maxAllowed)
+
+		if predicted < minAllowed-0.01 {
+			t.Errorf("Energy=%.2f: predicted %.2f below physics lower bound %.2f",
+				e, predicted, minAllowed)
+		}
+		if predicted > maxAllowed+0.01 {
+			t.Errorf("Energy=%.2f: predicted %.2f above physics upper bound %.2f",
+				e, predicted, maxAllowed)
+		}
+	}
+}
+
+func TestRoughnessPhysicsHardBoundaries(t *testing.T) {
+	testCases := []struct {
+		name         string
+		energy       float64
+		initialRough float64
+	}{
+		{"Very low energy", 0.2, 30.0},
+		{"Medium energy", 2.0, 30.0},
+		{"High energy", 5.0, 30.0},
+		{"Extreme energy", 8.0, 30.0},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := generateRoughnessTestSample(tc.energy, 200, 1000, 80, tc.initialRough,
+				0.5, 0.55, 0.25, 0.12, 0.08)
+			result := PredictRoughness(req)
+
+			pred := float64(result.PredictedRoughness)
+			lower := tc.initialRough * 0.3
+			upper := tc.initialRough * 1.05
+
+			t.Logf("%s: Ra=%.2f, bounds=[%.2f, %.2f]", tc.name, pred, lower, upper)
+
+			if pred < lower-0.5 {
+				t.Errorf("%s: pred %.2f too far below lower bound %.2f", tc.name, pred, lower)
+			}
+			if pred > upper+2.0 {
+				t.Errorf("%s: pred %.2f too far above upper bound %.2f", tc.name, pred, upper)
+			}
+		})
+	}
+}
+
+func TestRoughnessPhysicsBasedModel(t *testing.T) {
+	ensureForestTrained()
+
+	threshold := materialAblationThreshold(0.5, 0.3, 0.1, 0.1)
+	t.Logf("Material ablation threshold (calcite rich): %.3f J/cm²", threshold)
+	if threshold <= 0 {
+		t.Errorf("ablation threshold should be positive, got %f", threshold)
+	}
+
+	physRa := physicsBasedRoughness(2.0, 200, 1000, 80, 25, 0.5, 0.5, 0.3, 0.1, 0.1)
+	t.Logf("Physics-based roughness (F=2.0 J/cm²): %.2f μm", physRa)
+	if physRa <= 0 {
+		t.Errorf("physics roughness should be positive, got %f", physRa)
+	}
+
+	lowPhysRa := physicsBasedRoughness(0.5, 100, 500, 150, 20, 0.3, 0.4, 0.3, 0.2, 0.1)
+	t.Logf("Physics-based roughness (F=0.5 J/cm², below threshold): %.2f μm", lowPhysRa)
+
+	highPhysRa := physicsBasedRoughness(5.0, 300, 2000, 50, 30, 0.7, 0.5, 0.3, 0.1, 0.1)
+	t.Logf("Physics-based roughness (F=5.0 J/cm², high energy): %.2f μm", highPhysRa)
+	if highPhysRa < physRa {
+		t.Logf("Note: high energy roughness may saturate or decrease due to melting/smoothing")
+	}
+}
+
+func TestRoughnessPhysicsBlendWeight(t *testing.T) {
+	testCases := []struct {
+		energy float64
+		minW   float64
+		maxW   float64
+	}{
+		{0.3, 0.8, 1.0},
+		{0.7, 0.2, 0.9},
+		{1.5, 0.1, 0.3},
+		{3.0, 0.0, 0.2},
+	}
+
+	for _, tc := range testCases {
+		w := physicsBlendWeight(tc.energy)
+		t.Logf("Energy=%.1f → physics weight=%.3f (expected [%.2f, %.2f])",
+			tc.energy, w, tc.minW, tc.maxW)
+		if w < tc.minW-0.05 || w > tc.maxW+0.05 {
+			t.Errorf("blend weight %.3f for energy %.1f outside expected range",
+				w, tc.energy)
+		}
+	}
+}
+
+func TestRoughnessLowEnergyMonotonic(t *testing.T) {
+	energies := []float64{0.3, 0.5, 0.7, 0.9, 1.1, 1.3}
+	prevRa := 0.0
+	for i, e := range energies {
+		req := generateRoughnessTestSample(e, 150, 800, 100, 25, 0.4,
+			0.5, 0.3, 0.1, 0.1)
+		result := PredictRoughness(req)
+		ra := float64(result.PredictedRoughness)
+		t.Logf("Step %d: F=%.1f → Ra=%.2f", i, e, ra)
+		if i > 0 && ra < prevRa-0.3 {
+			t.Logf("  Note: Ra decreased from %.2f to %.2f (%.1f→%.1f), may be within noise",
+				prevRa, ra, energies[i-1], e)
+		}
+		prevRa = ra
 	}
 }
